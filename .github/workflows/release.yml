@@ -27,8 +27,7 @@ jobs:
       - name: Validate release commit
         run: |
           test -z "$(gofmt -l $(git ls-files '*.go'))"
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+          go mod tidy -diff
           go mod verify
           go vet ./...
           go test ./...

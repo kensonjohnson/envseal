@@ -20,8 +20,7 @@ jobs:
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - name: Verify module graph
         run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+          go mod tidy -diff
           go mod verify
       - name: Vet
         run: go vet ./...

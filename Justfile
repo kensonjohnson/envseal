@@ -1,5 +1,3 @@
-set shell := ["bash", "-euo", "pipefail", "-c"]
-
 default: check
 
 # Format all tracked Go source files.
@@ -22,10 +20,9 @@ race:
 vet:
     GOTOOLCHAIN=go1.24.0 go vet ./...
 
-# Ensure the pinned module graph is tidy and verifiable.
+# Ensure the pinned module graph is tidy and verifiable without modifying it.
 verify:
-    GOTOOLCHAIN=go1.24.0 go mod tidy
-    git diff --exit-code -- go.mod go.sum
+    GOTOOLCHAIN=go1.24.0 go mod tidy -diff
     GOTOOLCHAIN=go1.24.0 go mod verify
 
 # Build a local development binary.
