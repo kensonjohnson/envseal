@@ -1,4 +1,9 @@
-default: check
+set quiet
+
+# Display help
+[private]
+help:
+  just --list --unsorted
 
 # Format all tracked Go source files.
 fmt:
