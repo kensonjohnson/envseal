@@ -59,6 +59,12 @@ func New() *Writer {
 	return &Writer{fs: osFilesystem{}, syncDir: syncDirectory}
 }
 
+// ValidateSource requires a regular, non-symlink source before it is read.
+func (w *Writer) ValidateSource(source string) error {
+	_, err := w.regularSource(source)
+	return err
+}
+
 // WriteEncrypted replaces a validated regular source with encrypted content,
 // preserving its ordinary permission bits.
 func (w *Writer) WriteEncrypted(source string, data []byte) error {
@@ -69,9 +75,9 @@ func (w *Writer) WriteEncrypted(source string, data []byte) error {
 	return w.replace(source, data, info.Mode().Perm())
 }
 
-// WritePlaintext writes a decrypted output after validating a separate source.
-// Existing outputs require force and are always replaced with mode 0600.
-func (w *Writer) WritePlaintext(source, target string, data []byte, force bool) error {
+// ValidatePlaintextTarget rejects source/output collisions and disallowed
+// existing output targets before a password is requested or plaintext is made.
+func (w *Writer) ValidatePlaintextTarget(source, target string, force bool) error {
 	sourceInfo, err := w.regularSource(source)
 	if err != nil {
 		return err
@@ -98,6 +104,15 @@ func (w *Writer) WritePlaintext(source, target string, data []byte, force bool) 
 		return ErrInvalidTarget
 	}
 
+	return nil
+}
+
+// WritePlaintext writes a decrypted output after validating a separate source.
+// Existing outputs require force and are always replaced with mode 0600.
+func (w *Writer) WritePlaintext(source, target string, data []byte, force bool) error {
+	if err := w.ValidatePlaintextTarget(source, target, force); err != nil {
+		return err
+	}
 	return w.replace(target, data, 0o600)
 }
 

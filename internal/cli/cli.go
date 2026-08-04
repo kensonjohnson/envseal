@@ -4,7 +4,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -182,31 +181,10 @@ func validateRequest(req Request) error {
 	return nil
 }
 
-// Run applies the standard output and exit-code boundary around Parse. Command
-// execution is intentionally added by the command-composition implementation.
+// Run applies the standard output and exit-code boundary around Parse and the
+// production command executor.
 func Run(args []string, version string, stdout, stderr io.Writer) int {
-	req, err := Parse(args)
-	if err != nil {
-		var usage *UsageError
-		if errors.As(err, &usage) {
-			fmt.Fprintf(stderr, "envseal: %s\nRun 'envseal --help' for usage.\n", usage.Error())
-			return 2
-		}
-		fmt.Fprintln(stderr, "envseal: command parsing failed")
-		return 1
-	}
-
-	switch req.Command {
-	case CommandHelp:
-		fmt.Fprint(stdout, Usage(req.HelpFor))
-		return 0
-	case CommandVersion:
-		fmt.Fprintf(stdout, "envseal %s\n", version)
-		return 0
-	default:
-		fmt.Fprintln(stderr, "envseal: command is not implemented")
-		return 1
-	}
+	return run(args, version, stdout, stderr, newService())
 }
 
 // Usage returns the help text for the root command or an individual operation.
