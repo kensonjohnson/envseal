@@ -1,6 +1,8 @@
 /.pi/
 /tmp/
 /envseal
+/build/
+/dist/
 
 # Local decrypted dotenv outputs.
 .env

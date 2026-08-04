@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  attestations: write
+  artifact-metadata: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.0'
+      - name: Validate release commit
+        run: |
+          test -z "$(gofmt -l $(git ls-files '*.go'))"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+          go vet ./...
+          go test ./...
+          go test -fuzz=FuzzEncryptPreservesOutsideValueSpan -fuzztime=5s ./internal/dotenv
+      - name: Compute next CalVer tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          today=$(date -u +%Y%m%d)
+          highest=0
+          while IFS= read -r tag; do
+            suffix=${tag##*.}
+            if [[ $suffix =~ ^[0-9]+$ ]] && (( 10#$suffix > highest )); then
+              highest=$((10#$suffix))
+            fi
+          done < <(git tag -l "v1.${today}.*")
+          tag="v1.${today}.$((highest + 1))"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "computed tag already exists" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Build release archives
+        run: ./scripts/release-build.sh '${{ steps.version.outputs.tag }}'
+      - name: Attest release archives
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$TAG" --generate-notes

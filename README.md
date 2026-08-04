@@ -34,9 +34,38 @@ go get -tool github.com/kensonjohnson/envseal@v1.YYYYMMDD.N
 go tool envseal --version
 ```
 
-Release tags use Go-compatible CalVer: `v1.YYYYMMDD.N`, where `N` increments for multiple releases on a day. Source builds report `envseal devel`.
+To roll back, install a previously reviewed immutable tag and commit the resulting `go.mod` and `go.sum` diff:
+
+```sh
+go get -tool github.com/kensonjohnson/envseal@v1.20260803.1
+go tool envseal --version
+```
+
+Envseal is a public module, so the normal Go module proxy and checksum database apply; it needs no `GOPRIVATE` configuration. Release tags use Go-compatible CalVer: `v1.YYYYMMDD.N`, where `N` increments for multiple releases on a day. Source builds report `envseal devel`.
 
 GitHub Releases also provide optional archives for macOS, Linux, and Windows on amd64 and arm64, with `SHA256SUMS` and GitHub build-provenance attestations. `go tool` is the primary distribution path; v1 does not publish package-manager packages.
+
+After a release, maintainers should smoke-test the published module from a clean external module:
+
+```sh
+mkdir envseal-smoke && cd envseal-smoke
+go mod init example.invalid/envseal-smoke
+go get -tool github.com/kensonjohnson/envseal@v1.YYYYMMDD.N
+go tool envseal --version
+```
+
+Verify an optional downloaded archive before use:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+gh attestation verify envseal_v1.YYYYMMDD.N_linux_amd64.tar.gz --repo kensonjohnson/envseal
+```
+
+## Development and releases
+
+[Just](https://github.com/casey/just) is the repository command runner. Run `just check` before a change; it performs formatting, vet, tests, module verification, and a development build. `just release-build v1.YYYYMMDD.N` produces the six local release archives and `SHA256SUMS` in `dist/`.
+
+CI runs validation on pull requests and on pushes to `main`; it never creates a release. A maintainer starts the **Release** GitHub Actions workflow with `workflow_dispatch` from the protected `main` branch. The workflow validates the commit, computes the next UTC `v1.YYYYMMDD.N` tag, builds and attests all six archives, and creates one GitHub Release. The release binary reports that exact tag.
 
 ## Quick start
 
