@@ -65,7 +65,7 @@ gh attestation verify envseal_v1.YYYYMMDD.N_linux_amd64.tar.gz --repo kensonjohn
 
 [Just](https://github.com/casey/just) is the repository command runner. Run `just check` before a change; it performs formatting, vet, tests, module verification, and a development build. `just release-build v1.YYYYMMDD.N` produces the six local release archives and `SHA256SUMS` in `dist/`.
 
-CI runs validation on pull requests and on pushes to `main`; it never creates a release. A maintainer starts the **Release** GitHub Actions workflow with `workflow_dispatch` from the protected `main` branch. The workflow validates the commit, computes the next UTC `v1.YYYYMMDD.N` tag, builds and attests all six archives, and creates one GitHub Release. The release binary reports that exact tag.
+CI runs validation on pull requests; it never creates a release. A maintainer starts the **Release** GitHub Actions workflow with `workflow_dispatch` from the protected `main` branch. The workflow validates the commit, computes the next UTC `v1.YYYYMMDD.N` tag, builds and attests all six archives, and creates one GitHub Release. The release binary reports that exact tag.
 
 ## Quick start
 
