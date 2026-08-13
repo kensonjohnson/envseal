@@ -93,6 +93,70 @@ func TestRunEndToEndCommands(t *testing.T) {
 	})
 }
 
+func TestRunGenerate(t *testing.T) {
+	t.Run("passphrase writes only credential", func(t *testing.T) {
+		generator := &fakeGenerator{passphrase: "one-two-three-four-five-six-seven-eight"}
+		stdout, stderr, code := runGenerate(t, []string{"generate", "passphrase"}, generator)
+		if code != 0 {
+			t.Fatalf("run() exit = %d, want 0", code)
+		}
+		if got, want := stdout, "one-two-three-four-five-six-seven-eight\n"; got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+		if stderr != "" {
+			t.Fatalf("stderr = %q, want empty", stderr)
+		}
+		if generator.passphraseCount != 8 || generator.secretCount != 0 {
+			t.Fatalf("generator calls = passphrase %d, secret %d", generator.passphraseCount, generator.secretCount)
+		}
+	})
+
+	t.Run("secret writes only credential", func(t *testing.T) {
+		generator := &fakeGenerator{secret: "AAECAwQFBgcICQoLDA0ODw=="}
+		stdout, stderr, code := runGenerate(t, []string{"generate", "secret", "--bytes", "16"}, generator)
+		if code != 0 {
+			t.Fatalf("run() exit = %d, want 0", code)
+		}
+		if got, want := stdout, "AAECAwQFBgcICQoLDA0ODw==\n"; got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+		if stderr != "" {
+			t.Fatalf("stderr = %q, want empty", stderr)
+		}
+		if generator.passphraseCount != 0 || generator.secretCount != 16 {
+			t.Fatalf("generator calls = passphrase %d, secret %d", generator.passphraseCount, generator.secretCount)
+		}
+	})
+
+	t.Run("generator failure emits no credential", func(t *testing.T) {
+		generator := &fakeGenerator{secret: "partial-credential", err: errors.New("entropy source detail")}
+		stdout, stderr, code := runGenerate(t, []string{"generate", "secret"}, generator)
+		if code != 1 {
+			t.Fatalf("run() exit = %d, want 1", code)
+		}
+		if stdout != "" {
+			t.Fatalf("stdout = %q, want empty", stdout)
+		}
+		if got, want := stderr, "envseal: credential-generation-failed\n"; got != want {
+			t.Fatalf("stderr = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("usage failure does not invoke generator", func(t *testing.T) {
+		generator := &fakeGenerator{}
+		stdout, stderr, code := runGenerate(t, []string{"generate", "secret", "--words", "6"}, generator)
+		if code != 2 {
+			t.Fatalf("run() exit = %d, want 2", code)
+		}
+		if stdout != "" || !strings.Contains(stderr, "envseal:") {
+			t.Fatalf("output = stdout %q, stderr %q", stdout, stderr)
+		}
+		if generator.passphraseCount != 0 || generator.secretCount != 0 {
+			t.Fatalf("generator was invoked")
+		}
+	})
+}
+
 func TestRunFailureAndNoWritePaths(t *testing.T) {
 	const correct = "correct-password"
 	t.Run("wrong password preserves source and forced output", func(t *testing.T) {
@@ -224,6 +288,14 @@ func runService(t *testing.T, args []string, passwords *fakePasswords) (stdout, 
 	return out.String(), err.String()
 }
 
+func runGenerate(t *testing.T, args []string, generator credentialGenerator) (stdout, stderr string, code int) {
+	t.Helper()
+	service := &service{generator: generator}
+	var out, err bytes.Buffer
+	code = run(args, "devel", &out, &err, service)
+	return out.String(), err.String(), code
+}
+
 func sealedLine(t *testing.T, key, secret, plaintext string) string {
 	t.Helper()
 	encoded, err := envelope.Seal([]byte(secret), []byte(key), []byte(plaintext))
@@ -247,6 +319,24 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(contents)
+}
+
+type fakeGenerator struct {
+	passphrase      string
+	secret          string
+	err             error
+	passphraseCount int
+	secretCount     int
+}
+
+func (g *fakeGenerator) Passphrase(count int) (string, error) {
+	g.passphraseCount = count
+	return g.passphrase, g.err
+}
+
+func (g *fakeGenerator) Secret(count int) (string, error) {
+	g.secretCount = count
+	return g.secret, g.err
 }
 
 type fakePasswords struct {
