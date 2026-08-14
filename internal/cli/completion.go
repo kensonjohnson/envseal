@@ -34,7 +34,7 @@ fi
 
 _envseal_complete() {
   local cur command word mode
-  local index positional after_options
+  local index positional after_options dry_run expects_value
   cur=${COMP_WORDS[COMP_CWORD]}
   COMPREPLY=()
 
@@ -44,16 +44,38 @@ _envseal_complete() {
   fi
 
   command=${COMP_WORDS[1]}
-  if [[ "$cur" == -* ]]; then
+  positional=0
+  after_options=0
+  dry_run=0
+  expects_value=0
+  for ((index = 2; index < COMP_CWORD; index++)); do
+    word=${COMP_WORDS[index]}
+    if (( ! after_options )) && [[ "$word" == '--' ]]; then
+      after_options=1
+      continue
+    fi
+    if (( ! after_options )); then
+      case "$word" in
+        --quiet|--force|--help) continue ;;
+        --dry-run) dry_run=1; continue ;;
+        --words|--bytes)
+          if (( index + 1 == COMP_CWORD )); then expects_value=1; break; fi
+          ((index++))
+          continue
+          ;;
+      esac
+    fi
+    ((positional++))
+    if [[ "$command" == generate ]] && (( positional == 1 )); then mode=$word; fi
+  done
+
+  if (( expects_value )); then return; fi
+
+  if (( ! after_options )) && [[ "$cur" == -* ]]; then
     case "$command" in
       encrypt|rotate|check) COMPREPLY=( $(compgen -W '--quiet --help' -- "$cur") ) ;;
       decrypt) COMPREPLY=( $(compgen -W '--quiet --force --dry-run --help' -- "$cur") ) ;;
       generate)
-        for ((index = 2; index < COMP_CWORD; index++)); do
-          case ${COMP_WORDS[index]} in
-            passphrase|secret) mode=${COMP_WORDS[index]} ;;
-          esac
-        done
         case "$mode" in
           passphrase) COMPREPLY=( $(compgen -W '--words --help' -- "$cur") ) ;;
           secret) COMPREPLY=( $(compgen -W '--bytes --help' -- "$cur") ) ;;
@@ -71,31 +93,12 @@ _envseal_complete() {
     return
   fi
 
-  positional=0
-  after_options=0
-  for ((index = 2; index < COMP_CWORD; index++)); do
-    word=${COMP_WORDS[index]}
-    if (( ! after_options )) && [[ "$word" == '--' ]]; then
-      after_options=1
-      continue
-    fi
-    if (( ! after_options )); then
-      case "$word" in
-        --quiet|--force|--dry-run|--help) continue ;;
-        --words|--bytes) ((index++)); continue ;;
-      esac
-    fi
-    ((positional++))
-  done
-
   case "$command" in
     encrypt)
       if (( positional == 0 )); then COMPREPLY=( $(compgen -f -- "$cur") ); fi
       ;;
     decrypt)
-      if [[ " ${COMP_WORDS[*]} " != *' --dry-run '* ]] && (( positional < 2 )); then
-        COMPREPLY=( $(compgen -f -- "$cur") )
-      elif [[ " ${COMP_WORDS[*]} " == *' --dry-run '* ]] && (( positional == 0 )); then
+      if (( ! dry_run && positional < 2 )) || (( dry_run && positional == 0 )); then
         COMPREPLY=( $(compgen -f -- "$cur") )
       fi
       ;;
@@ -136,7 +139,7 @@ _envseal() {
   )
 
   if (( CURRENT == 2 )); then
-    compadd -a commands
+    _describe 'command' commands
     _values 'global option' '--help[Show root help]' '--version[Print the build version]'
     return
   fi
@@ -146,25 +149,29 @@ _envseal() {
       _arguments '--quiet[Suppress the success summary]' '--help[Show help]' '1:source file:_files' '*:key:'
       ;;
     decrypt)
-      _arguments '--quiet[Suppress the success summary]' '--force[Replace an existing output]' '--dry-run[Authenticate without writing]' '--help[Show help]' '1:source file:_files' '2:plaintext output:_files'
+      if (( ${words[(I)--dry-run]} )); then
+        _arguments '--quiet[Suppress the success summary]' '--dry-run[Authenticate without writing]' '--help[Show help]' '1:source file:_files'
+      else
+        _arguments '--quiet[Suppress the success summary]' '--force[Replace an existing output]' '--dry-run[Authenticate without writing]' '--help[Show help]' '1:source file:_files' '2:plaintext output:_files'
+      fi
       ;;
     rotate|check)
       _arguments '--quiet[Suppress the success summary]' '--help[Show help]' '1:source file:_files'
       ;;
     generate)
       if (( ${words[(I)passphrase]} )); then
-        _arguments '--words=[Passphrase word count]:count:' '--help[Show help]'
+        _arguments '--words[Passphrase word count]:count:' '--help[Show help]'
       elif (( ${words[(I)secret]} )); then
-        _arguments '--bytes=[Secret byte count]:count:' '--help[Show help]'
+        _arguments '--bytes[Secret byte count]:count:' '--help[Show help]'
       else
-        _arguments '--help[Show help]' '1:mode:(passphrase secret)'
+        _arguments '--words[Passphrase word count]:count:' '--bytes[Secret byte count]:count:' '--help[Show help]' '1:mode:(passphrase secret)'
       fi
       ;;
     completion)
       if [[ $words[3] == install ]]; then
         _arguments '--configure-shell[Allow a shell startup-file edit]' '--help[Show help]' '1:action:(install)' '2:shell:(bash zsh fish powershell)'
       else
-        _arguments '--help[Show help]' '1:target:(bash zsh fish powershell install)' '2:shell:(bash zsh fish powershell)'
+        _arguments '--help[Show help]' '1:target:(bash zsh fish powershell install)'
       fi
       ;;
   esac
@@ -189,10 +196,28 @@ function __fish_envseal_file_position
     set -l command $words[1]
     set -e words[1]
     set -l positional 0
+    set -l after_options 0
+    set -l skip_value 0
+    set -l dry_run 0
     for word in $words
-        switch $word
-            case --quiet --force --dry-run --help
-                continue
+        if test $skip_value -eq 1
+            set skip_value 0
+            continue
+        end
+        if test $after_options -eq 0
+            switch $word
+                case --
+                    set after_options 1
+                    continue
+                case --quiet --force --help
+                    continue
+                case --dry-run
+                    set dry_run 1
+                    continue
+                case --words --bytes
+                    set skip_value 1
+                    continue
+            end
         end
         set positional (math $positional + 1)
     end
@@ -200,7 +225,7 @@ function __fish_envseal_file_position
         case encrypt rotate check
             test $positional -eq 0
         case decrypt
-            if contains -- --dry-run $words
+            if test $dry_run -eq 1
                 test $positional -eq 0
             else
                 test $positional -lt 2
@@ -210,21 +235,59 @@ function __fish_envseal_file_position
     end
 end
 
+function __fish_envseal_command_is
+    set -l words (commandline -opc)
+    test (count $words) -ge 2; and test $words[2] = $argv[1]
+end
+
+function __fish_envseal_completion_position
+    set -l expected $argv[1]
+    set -l words (commandline -opc)
+    if test (count $words) -lt 2
+        return 1
+    end
+    set -e words[1]
+    if test $words[1] != completion
+        return 1
+    end
+    set -e words[1]
+    set -l positional 0
+    set -l after_options 0
+    for word in $words
+        if test $after_options -eq 0
+            switch $word
+                case --
+                    set after_options 1
+                    continue
+                case --help --configure-shell
+                    continue
+            end
+        end
+        set positional (math $positional + 1)
+    end
+    test $positional -eq $expected
+end
+
+function __fish_envseal_completion_install
+    set -l words (commandline -opc)
+    test (count $words) -ge 3; and test $words[2] = completion; and test $words[3] = install
+end
+
 complete -c envseal -f
 complete -c envseal -n '__fish_use_subcommand' -a 'encrypt decrypt rotate check generate completion'
 complete -c envseal -n '__fish_use_subcommand' -l help -d 'Show help'
 complete -c envseal -n '__fish_use_subcommand' -l version -d 'Print the build version'
-complete -c envseal -n '__fish_seen_subcommand_from encrypt rotate check' -l quiet -d 'Suppress the success summary'
-complete -c envseal -n '__fish_seen_subcommand_from decrypt' -l quiet -d 'Suppress the success summary'
-complete -c envseal -n '__fish_seen_subcommand_from decrypt' -l force -d 'Replace an existing output'
-complete -c envseal -n '__fish_seen_subcommand_from decrypt' -l dry-run -d 'Authenticate without writing'
-complete -c envseal -n '__fish_seen_subcommand_from encrypt decrypt rotate check generate completion' -l help -d 'Show help'
-complete -c envseal -n '__fish_seen_subcommand_from generate; and not __fish_seen_subcommand_from passphrase secret' -a 'passphrase secret'
-complete -c envseal -n '__fish_seen_subcommand_from passphrase' -l words -r -d 'Passphrase word count'
-complete -c envseal -n '__fish_seen_subcommand_from secret' -l bytes -r -d 'Secret byte count'
-complete -c envseal -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from install' -a 'bash zsh fish powershell install'
-complete -c envseal -n '__fish_seen_subcommand_from completion install' -a 'bash zsh fish powershell'
-complete -c envseal -n '__fish_seen_subcommand_from completion install' -l configure-shell -d 'Allow a shell startup-file edit'
+complete -c envseal -n '__fish_seen_subcommand_from encrypt rotate check; and not __fish_seen_argument -l quiet' -l quiet -d 'Suppress the success summary'
+complete -c envseal -n '__fish_seen_subcommand_from decrypt; and not __fish_seen_argument -l quiet' -l quiet -d 'Suppress the success summary'
+complete -c envseal -n '__fish_seen_subcommand_from decrypt; and not __fish_seen_argument -l force' -l force -d 'Replace an existing output'
+complete -c envseal -n '__fish_seen_subcommand_from decrypt; and not __fish_seen_argument -l dry-run' -l dry-run -d 'Authenticate without writing'
+complete -c envseal -n '__fish_seen_subcommand_from encrypt decrypt rotate check generate completion; and not __fish_seen_argument -l help' -l help -d 'Show help'
+complete -c envseal -n '__fish_envseal_command_is generate; and not __fish_seen_subcommand_from passphrase secret' -a 'passphrase secret'
+complete -c envseal -n '__fish_envseal_command_is generate; and not __fish_seen_subcommand_from secret; and not __fish_seen_argument -l words' -l words -r -d 'Passphrase word count'
+complete -c envseal -n '__fish_envseal_command_is generate; and not __fish_seen_subcommand_from passphrase; and not __fish_seen_argument -l bytes' -l bytes -r -d 'Secret byte count'
+complete -c envseal -n '__fish_envseal_completion_position 0' -a 'bash zsh fish powershell install'
+complete -c envseal -n '__fish_envseal_completion_install; and __fish_envseal_completion_position 1' -a 'bash zsh fish powershell'
+complete -c envseal -n '__fish_envseal_completion_install; and not __fish_seen_argument -l configure-shell' -l configure-shell -d 'Allow a shell startup-file edit'
 complete -c envseal -n '__fish_envseal_file_position' -F
 `
 
@@ -244,10 +307,15 @@ Register-ArgumentCompleter -Native -CommandName envseal -ScriptBlock {
             Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
     }
+    $quoteCompletion = {
+        param([string]$value)
+        "'" + $value.Replace("'", "''") + "'"
+    }
     $completeFiles = {
         Get-ChildItem -Path ($wordToComplete + '*') -Force -ErrorAction SilentlyContinue |
             ForEach-Object {
-                [System.Management.Automation.CompletionResult]::new($_.FullName, $_.Name, 'ProviderItem', $_.FullName)
+                $insertionText = & $quoteCompletion $_.FullName
+                [System.Management.Automation.CompletionResult]::new($insertionText, $_.Name, 'ProviderItem', $_.FullName)
             }
     }
 
@@ -257,34 +325,67 @@ Register-ArgumentCompleter -Native -CommandName envseal -ScriptBlock {
     }
 
     $command = $words[1]
-    if ($wordToComplete -like '-*') {
+    $arguments = @($words | Select-Object -Skip 2)
+    if ($wordToComplete -and $arguments.Count -gt 0 -and $arguments[-1] -eq $wordToComplete) {
+        $arguments = @($arguments | Select-Object -First ($arguments.Count - 1))
+    }
+
+    $positionals = @()
+    $afterOptions = $false
+    $dryRun = $false
+    $expectsOptionValue = $false
+    for ($index = 0; $index -lt $arguments.Count; $index++) {
+        $argument = $arguments[$index]
+        $consumedOption = $false
+        if (-not $afterOptions) {
+            switch ($argument) {
+                '--' { $afterOptions = $true; $consumedOption = $true }
+                '--quiet' { $consumedOption = $true }
+                '--force' { $consumedOption = $true }
+                '--dry-run' { $dryRun = $true; $consumedOption = $true }
+                '--help' { $consumedOption = $true }
+                '--configure-shell' { $consumedOption = $true }
+                '--words' {
+                    if ($index + 1 -eq $arguments.Count) { $expectsOptionValue = $true }
+                    else { $index++ }
+                    $consumedOption = $true
+                }
+                '--bytes' {
+                    if ($index + 1 -eq $arguments.Count) { $expectsOptionValue = $true }
+                    else { $index++ }
+                    $consumedOption = $true
+                }
+            }
+        }
+        if ($consumedOption) { continue }
+        $positionals += $argument
+    }
+
+    if ($expectsOptionValue) { return }
+
+    if (-not $afterOptions -and $wordToComplete -like '-*') {
         switch ($command) {
             'encrypt' { & $complete @('--quiet', '--help') }
             'decrypt' { & $complete @('--quiet', '--force', '--dry-run', '--help') }
             'rotate' { & $complete @('--quiet', '--help') }
             'check' { & $complete @('--quiet', '--help') }
             'generate' {
-                if ($words -contains 'passphrase') { & $complete @('--words', '--help') }
-                elseif ($words -contains 'secret') { & $complete @('--bytes', '--help') }
+                if ($positionals -contains 'passphrase') { & $complete @('--words', '--help') }
+                elseif ($positionals -contains 'secret') { & $complete @('--bytes', '--help') }
                 else { & $complete @('--words', '--bytes', '--help') }
             }
             'completion' {
-                if ($words -contains 'install') { & $complete @('--configure-shell', '--help') }
+                if ($positionals.Count -gt 0 -and $positionals[0] -eq 'install') { & $complete @('--configure-shell', '--help') }
                 else { & $complete @('--help') }
             }
         }
         return
     }
 
-    $arguments = @($words | Select-Object -Skip 2)
-    if ($wordToComplete -and $arguments.Count -gt 0 -and $arguments[-1] -eq $wordToComplete) {
-        $arguments = @($arguments | Select-Object -First ($arguments.Count - 1))
-    }
-    $positionals = @($arguments | Where-Object { $_ -notlike '-*' })
     switch ($command) {
         'encrypt' { if ($positionals.Count -eq 0) { & $completeFiles } }
         'decrypt' {
-            if ($words -contains '--dry-run') {
+            if ($dryRun) {
                 if ($positionals.Count -eq 0) { & $completeFiles }
             } elseif ($positionals.Count -lt 2) {
                 & $completeFiles

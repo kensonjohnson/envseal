@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -95,6 +98,16 @@ func TestCompletionUsageAndRendering(t *testing.T) {
 	}
 }
 
+func TestZshRootCommandsUseDescriptionAwareCompletion(t *testing.T) {
+	script := completionScript("zsh")
+	if !strings.Contains(script, "_describe 'command' commands") {
+		t.Fatal("Zsh root commands must use _describe so command text and descriptions are separate")
+	}
+	if strings.Contains(script, "compadd -a commands") {
+		t.Fatal("Zsh root commands must not pass name:description candidates directly to compadd")
+	}
+}
+
 func TestFishCompletionUsesForcedFilesOnlyAtFilePositions(t *testing.T) {
 	script := completionScript("fish")
 	if strings.Contains(script, "__fish_complete_path") {
@@ -105,6 +118,148 @@ func TestFishCompletionUsesForcedFilesOnlyAtFilePositions(t *testing.T) {
 	}
 	if !strings.Contains(script, "complete -c envseal -n '__fish_envseal_file_position' -F") {
 		t.Fatal("Fish completion must force file candidates only at source/output positions")
+	}
+}
+
+func TestCompletionScriptsMatchCLIGrammar(t *testing.T) {
+	bash := completionScript("bash")
+	for _, required := range []string{
+		"bash zsh fish powershell install", "--configure-shell --help",
+		"if (( ! after_options )) && [[ \"$cur\" == -* ]]", "--words --bytes --help",
+	} {
+		if !strings.Contains(bash, required) {
+			t.Fatalf("Bash completion does not contain %q", required)
+		}
+	}
+
+	zsh := completionScript("zsh")
+	for _, forbidden := range []string{"--words=", "--bytes="} {
+		if strings.Contains(zsh, forbidden) {
+			t.Fatalf("Zsh completion offers parser-invalid %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"'--words[Passphrase word count]:count:'", "'--bytes[Secret byte count]:count:'",
+		"if (( ${words[(I)--dry-run]} )); then", "'1:source file:_files'",
+		"'1:target:(bash zsh fish powershell install)'",
+	} {
+		if !strings.Contains(zsh, required) {
+			t.Fatalf("Zsh completion does not contain %q", required)
+		}
+	}
+
+	fish := completionScript("fish")
+	for _, required := range []string{
+		"set -l after_options 0", "case --words --bytes", "__fish_envseal_completion_position 0",
+		"__fish_envseal_completion_install; and __fish_envseal_completion_position 1",
+		"__fish_envseal_command_is generate; and not __fish_seen_subcommand_from secret",
+		"not __fish_seen_argument -l words", "not __fish_seen_argument -l bytes",
+	} {
+		if !strings.Contains(fish, required) {
+			t.Fatalf("Fish completion does not contain %q", required)
+		}
+	}
+
+	powershell := completionScript("powershell")
+	for _, required := range []string{
+		"$quoteCompletion =", "$value.Replace(\"'\", \"''\")",
+		"CompletionResult]::new($insertionText, $_.Name", "$expectsOptionValue = $true",
+		"'--' { $afterOptions = $true; $consumedOption = $true }", "'--configure-shell', '--help'",
+	} {
+		if !strings.Contains(powershell, required) {
+			t.Fatalf("PowerShell completion does not contain %q", required)
+		}
+	}
+}
+
+func TestPowerShellFileCompletionQuotesAdversarialPaths(t *testing.T) {
+	script := completionScript("powershell")
+	for _, path := range []string{
+		`C:\\tmp\\plain.env`,
+		`C:\\tmp\\space name.env`,
+		`C:\\tmp\\quote' ; Remove-Item -Recurse -Force C:\\`,
+		`C:\\tmp\\$(Invoke-Expression 'bad').env`,
+	} {
+		want := "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		if !strings.HasPrefix(want, "'") || !strings.HasSuffix(want, "'") || (strings.Contains(path, "'") && !strings.Contains(want, "''")) {
+			t.Fatalf("path %q is not safely single-quoted as %q", path, want)
+		}
+	}
+	if strings.Contains(script, "CompletionResult]::new($_.FullName") {
+		t.Fatal("PowerShell file completion must never use an unquoted path as insertion text")
+	}
+}
+
+func TestBashCompletionBehavior(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is unavailable")
+	}
+
+	temp := t.TempDir()
+	completion := filepath.Join(temp, "envseal.bash")
+	if err := os.WriteFile(completion, []byte(completionScript("bash")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(temp, "-dash-prefixed.env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(words ...string) string {
+		t.Helper()
+		command := `source "$1"
+shift
+COMP_WORDS=("$@")
+COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+_envseal_complete
+printf '%s\n' "${COMPREPLY[@]}"`
+		result := exec.Command("bash", "-c", command, "bash", completion)
+		result.Args = append(result.Args, words...)
+		result.Dir = temp
+		output, err := result.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash completion %q: %v\n%s", words, err, output)
+		}
+		return string(output)
+	}
+
+	if got := run("envseal", "completion", "install", ""); got != "bash\nzsh\nfish\npowershell\n" {
+		t.Fatalf("completion install shell candidates = %q", got)
+	}
+	if got := run("envseal", "completion", "install", "bash", "--"); !strings.Contains(got, "--configure-shell") {
+		t.Fatalf("completion install option candidates = %q", got)
+	}
+	if got := run("envseal", "generate", "--"); !strings.Contains(got, "--words") || !strings.Contains(got, "--bytes") {
+		t.Fatalf("generate pre-mode option candidates = %q", got)
+	}
+	if got := run("envseal", "encrypt", "--", "-dash"); got != "-dash-prefixed.env\n" {
+		t.Fatalf("dash-prefixed path candidate after -- = %q", got)
+	}
+}
+
+func TestCompletionScriptsShellSyntax(t *testing.T) {
+	for shell, flag := range map[string]string{"bash": "-n", "zsh": "-n"} {
+		shell, flag := shell, flag
+		t.Run(shell, func(t *testing.T) {
+			if _, err := exec.LookPath(shell); err != nil {
+				t.Skip(shell + " is unavailable")
+			}
+			path := filepath.Join(t.TempDir(), "completion")
+			if err := os.WriteFile(path, []byte(completionScript(shell)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := exec.Command(shell, flag, path).CombinedOutput(); err != nil {
+				t.Fatalf("%s syntax check: %v\n%s", shell, err, output)
+			}
+			var command *exec.Cmd
+			if shell == "bash" {
+				command = exec.Command("bash", "-c", `source "$1"; complete -p envseal`, "bash", path)
+			} else {
+				command = exec.Command("zsh", "-f", "-c", `autoload -Uz compinit; compinit -D; source "$1"; (( $+functions[_envseal] ))`, "zsh", path)
+			}
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("%s completion registration check: %v\n%s", shell, err, output)
+			}
+		})
 	}
 }
 
