@@ -6,8 +6,17 @@
 
 ## Requirements and support
 
+<<<<<<< Updated upstream
 - Go **1.24+** for the primary `go tool` workflow.
+<<<<<<< Updated upstream
 - macOS, Linux, or Windows; `encrypt`, `decrypt`, and `rotate` require an interactive controlling terminal for password prompts.
+=======
+- macOS, Linux, or Windows with an interactive controlling terminal.
+=======
+- Go **1.24+** for the `go tool` and global `go install` workflows.
+- macOS, Linux, or Windows; `encrypt`, `decrypt`, and `rotate` require an interactive controlling terminal for password prompts.
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 - `golang.org/x/term` is Envseal's only non-standard runtime dependency; cryptography uses Go's standard library.
 
 Passwords are read hidden from the controlling terminal only. Envseal never accepts a password in an argument, environment variable, stdin, or a file.
@@ -43,6 +52,21 @@ go tool envseal --version
 
 Envseal is a public module, so the normal Go module proxy and checksum database apply; it needs no `GOPRIVATE` configuration. Release tags use Go-compatible CalVer: `v1.YYYYMMDD.N`, where `N` increments for multiple releases on a day. Source builds report `envseal devel`.
 
+## Install globally
+
+The repository-pinned `go tool` workflow above is preferred. To install a direct global binary instead, pin a reviewed release tag:
+
+```sh
+go install github.com/kensonjohnson/envseal@v1.YYYYMMDD.N
+```
+
+This installs `envseal` to `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset. Ensure that directory is on `PATH`, then invoke the binary directly:
+
+```sh
+envseal --version
+envseal check .env.example
+```
+
 GitHub Releases also provide optional archives for macOS, Linux, and Windows on amd64 and arm64, with `SHA256SUMS` and GitHub build-provenance attestations. `go tool` is the primary distribution path; v1 does not publish package-manager packages.
 
 After a release, maintainers should smoke-test the published module from a clean external module:
@@ -61,11 +85,22 @@ shasum -a 256 -c SHA256SUMS
 gh attestation verify envseal_v1.YYYYMMDD.N_linux_amd64.tar.gz --repo kensonjohnson/envseal
 ```
 
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
 ## Shell completion
 
 Envseal renders static completion for Bash, Zsh, Fish, and PowerShell. The rendered scripts complete `envseal` directly when that binary is on `PATH`; otherwise they define an `envseal` wrapper that runs the repository-pinned `go tool envseal`. They do not alter `go` completion.
 
+<<<<<<< Updated upstream
 Render a script without changing the filesystem (replace `go tool envseal` with a direct `envseal` binary command when using a release archive):
+=======
+The commands below use the repository-pinned workflow. For a global `go install` binary (or a release archive binary), replace every `go tool envseal` with `envseal`.
+
+Render a script without changing the filesystem:
+>>>>>>> Stashed changes
 
 ```sh
 go tool envseal completion bash
@@ -98,6 +133,10 @@ go tool envseal completion install powershell --configure-shell # current-user P
 
 Before writing, `--configure-shell` prints the exact rendered-script target and profile block it will add. It then writes the static rendered script to `$XDG_CONFIG_HOME/envseal/completions` (normally `~/.config/envseal/completions`) and adds that marked, idempotent profile block sourcing the absolute script path. The block preserves existing content, is not duplicated on later runs, and contains no `go tool` command, so configured completion works equally with a direct release binary and the repository-pinned workflow. Restart the relevant shell after configuring it.
 
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 ## Development and releases
 
 [Just](https://github.com/casey/just) is the repository command runner. Run `just check` before a change; it performs formatting, vet, tests, module verification, and a development build. `just release-build v1.YYYYMMDD.N` produces the six local release archives and `SHA256SUMS` in `dist/`.
