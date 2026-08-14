@@ -136,7 +136,7 @@ _envseal() {
   )
 
   if (( CURRENT == 2 )); then
-    compadd -a commands
+    _describe 'command' commands
     _values 'global option' '--help[Show root help]' '--version[Print the build version]'
     return
   fi

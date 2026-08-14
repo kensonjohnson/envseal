@@ -95,6 +95,16 @@ func TestCompletionUsageAndRendering(t *testing.T) {
 	}
 }
 
+func TestZshRootCommandsUseDescriptionAwareCompletion(t *testing.T) {
+	script := completionScript("zsh")
+	if !strings.Contains(script, "_describe 'command' commands") {
+		t.Fatal("Zsh root commands must use _describe so command text and descriptions are separate")
+	}
+	if strings.Contains(script, "compadd -a commands") {
+		t.Fatal("Zsh root commands must not pass name:description candidates directly to compadd")
+	}
+}
+
 func TestFishCompletionUsesForcedFilesOnlyAtFilePositions(t *testing.T) {
 	script := completionScript("fish")
 	if strings.Contains(script, "__fish_complete_path") {
