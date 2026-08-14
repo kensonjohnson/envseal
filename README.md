@@ -1,13 +1,13 @@
 # envseal
 
-`envseal` encrypts selected simple dotenv values in a committed file and decrypts them to an explicit local output. It is a small Go command for repositories that need to share one password-manager-held secret without putting plaintext values in Git.
+`envseal` generates high-entropy credentials and encrypts selected simple dotenv values in a committed file, decrypting them to an explicit local output. It is a small Go command for repositories that need to share one password-manager-held secret without putting plaintext values in Git.
 
 > **Scope:** Envseal encrypts dotenv value bodies; it is not a secrets manager, access-control system, or a substitute for production secret storage.
 
 ## Requirements and support
 
 - Go **1.24+** for the primary `go tool` workflow.
-- macOS, Linux, or Windows with an interactive controlling terminal.
+- macOS, Linux, or Windows; `encrypt`, `decrypt`, and `rotate` require an interactive controlling terminal for password prompts.
 - `golang.org/x/term` is Envseal's only non-standard runtime dependency; cryptography uses Go's standard library.
 
 Passwords are read hidden from the controlling terminal only. Envseal never accepts a password in an argument, environment variable, stdin, or a file.
@@ -61,6 +61,43 @@ shasum -a 256 -c SHA256SUMS
 gh attestation verify envseal_v1.YYYYMMDD.N_linux_amd64.tar.gz --repo kensonjohnson/envseal
 ```
 
+## Shell completion
+
+Envseal renders static completion for Bash, Zsh, Fish, and PowerShell. The rendered scripts complete `envseal` directly when that binary is on `PATH`; otherwise they define an `envseal` wrapper that runs the repository-pinned `go tool envseal`. They do not alter `go` completion.
+
+Render a script without changing the filesystem (replace `go tool envseal` with a direct `envseal` binary command when using a release archive):
+
+```sh
+go tool envseal completion bash
+go tool envseal completion zsh
+go tool envseal completion fish
+go tool envseal completion powershell
+```
+
+Install only writes to a shell-verified autoload location. It never changes a startup or profile file by default:
+
+```sh
+go tool envseal completion install bash
+go tool envseal completion install zsh
+go tool envseal completion install fish
+go tool envseal completion install powershell
+```
+
+- **Bash:** Install [bash-completion](https://github.com/scop/bash-completion) and ensure it is loaded by your existing Bash setup. Envseal then writes `envseal.bash` to its configured `BASH_COMPLETION_USER_DIR`, or its default user completion directory. Start a new shell or reload your existing bash-completion setup. If no framework is detected, Envseal writes nothing; activate the current shell with `source <(go tool envseal completion bash)`.
+- **Zsh:** Enable `autoload -Uz compinit && compinit` in your existing Zsh setup and ensure an existing writable entry is present in `$fpath`. Envseal writes `_envseal` there; restart Zsh or run `compinit` again. If no such entry is found, no files are written; activate the current shell with `source <(go tool envseal completion zsh)`.
+- **Fish:** Envseal writes `envseal.fish` to `$XDG_CONFIG_HOME/fish/completions` (normally `~/.config/fish/completions`). Fish loads it automatically in a new shell; run `source ~/.config/fish/completions/envseal.fish` to load the default-location file now.
+- **PowerShell:** PowerShell has no arbitrary completion autoload directory, so its default install intentionally writes nothing. Activate the current session with `go tool envseal completion powershell | Invoke-Expression`.
+
+When the safe default reports no verified autoload location, persist completion only by explicitly consenting to a small idempotent startup/profile block:
+
+```sh
+go tool envseal completion install bash --configure-shell       # ~/.bashrc
+go tool envseal completion install zsh --configure-shell        # ~/.zshrc
+go tool envseal completion install powershell --configure-shell # current-user PowerShell profile
+```
+
+Before writing, `--configure-shell` prints the exact rendered-script target and profile block it will add. It then writes the static rendered script to `$XDG_CONFIG_HOME/envseal/completions` (normally `~/.config/envseal/completions`) and adds that marked, idempotent profile block sourcing the absolute script path. The block preserves existing content, is not duplicated on later runs, and contains no `go tool` command, so configured completion works equally with a direct release binary and the repository-pinned workflow. Restart the relevant shell after configuring it.
+
 ## Development and releases
 
 [Just](https://github.com/casey/just) is the repository command runner. Run `just check` before a change; it performs formatting, vet, tests, module verification, and a development build. `just release-build v1.YYYYMMDD.N` produces the six local release archives and `SHA256SUMS` in `dist/`.
@@ -69,7 +106,14 @@ CI runs validation on pull requests; it never creates a release. A maintainer st
 
 ## Quick start
 
-Generate one high-entropy shared password in your password manager and distribute it outside Git. Every collaborator who needs to decrypt or rotate the file needs that password.
+Generate a high-entropy shared credential, store it in a password manager, and distribute it outside Git. Every collaborator who needs to decrypt or rotate the file needs that credential:
+
+```sh
+go tool envseal generate passphrase
+go tool envseal generate secret
+```
+
+`generate passphrase` prints an eight-word hyphenated passphrase by default. `generate secret` prints a standard padded Base64 encoding of 32 random bytes by default. Each command writes exactly one credential plus a newline to stdout; normal shell redirection, pipes, terminal scrollback, and logs can persist or disclose it.
 
 Create a committed template with placeholders only:
 
@@ -115,18 +159,22 @@ envseal decrypt [--quiet] [--force] <source> <plaintext-output>
 envseal decrypt [--quiet] --dry-run <source>
 envseal rotate  [--quiet] <source>
 envseal check   [--quiet] <source>
+envseal generate passphrase [--words <count>]
+envseal generate secret [--bytes <count>]
 ```
 
 - `encrypt` seals only named plaintext keys in place and skips selected values already sealed.
 - `decrypt` authenticates every envelope and writes all restored values to a distinct output path.
 - `rotate` authenticates and re-encrypts every envelope in place with a confirmed replacement password.
 - `check` validates the entire file's grammar, duplicate keys, and envelope structure without prompting or writing.
-- `--quiet` suppresses the one success summary, never diagnostics.
+- `generate passphrase` creates an EFF Large Wordlist passphrase; `--words` accepts 6–64 words and defaults to 8.
+- `generate secret` creates a standard padded Base64 machine secret; `--bytes` accepts 16–4,096 random bytes and defaults to 32.
+- `--quiet` suppresses the one success summary, never diagnostics; generation has no summary and does not accept `--quiet`.
 - `--force` is decrypt-only and permits replacing the explicit plaintext output.
 - `--dry-run` is decrypt-only; it prompts and authenticates but writes nothing.
 - `--` stops option parsing for a path or key beginning with `-`.
 
-Each successful command prints one summary to stdout. Operational, validation, and authentication failures return exit code 1; malformed invocations return exit code 2. Diagnostics go to stderr and identify a path, optional line number, and category—not dotenv values, ciphertext, or password material.
+Each successful dotenv command prints one summary to stdout. Each successful generation command writes only the credential and trailing newline to stdout. Operational, validation, authentication, and generation failures return exit code 1; malformed invocations return exit code 2. Diagnostics go to stderr and identify a path, optional line number, and category—not dotenv values, ciphertext, password material, or generated credentials.
 
 ## Dotenv subset
 
@@ -142,7 +190,7 @@ For `encrypt`, an unsupported line fails only when it is selected; unselected un
 
 ## Passwords, encryption, and compatibility
 
-Use a password-manager-generated 256-bit secret. Do not place it in Git, shell history, CI, environment variables, or a dotenv file. Envseal asks for confirmation when encrypting or rotating, asks once to decrypt, and reads no password for `check`.
+Use `generate secret` for a password-manager-held 256-bit secret, or `generate passphrase` when a human-typable shared credential is preferred. Do not place generated credentials in Git, shell history, CI, environment variables, or a dotenv file. Envseal asks for confirmation when encrypting or rotating, asks once to decrypt, and reads no password for `check` or `generate`.
 
 Each v1 envelope uses PBKDF2-HMAC-SHA-256 with 1,000,000 iterations, a fresh 16-byte salt, and AES-256-GCM. The exact dotenv key is authenticated associated data, so moving an envelope to another key fails authentication. Plaintext values are limited to 1 MiB.
 

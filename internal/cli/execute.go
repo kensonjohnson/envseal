@@ -9,6 +9,7 @@ import (
 	"github.com/kensonjohnson/envseal/internal/dotenv"
 	"github.com/kensonjohnson/envseal/internal/envelope"
 	"github.com/kensonjohnson/envseal/internal/filewrite"
+	"github.com/kensonjohnson/envseal/internal/generator"
 	"github.com/kensonjohnson/envseal/internal/password"
 )
 
@@ -22,6 +23,11 @@ type passwordPrompter interface {
 	Rotate() (current, replacement []byte, err error)
 }
 
+type credentialGenerator interface {
+	Passphrase(int) (string, error)
+	Secret(int) (string, error)
+}
+
 type sourceWriter interface {
 	ValidateSource(string) error
 	ValidatePlaintextTarget(source, target string, force bool) error
@@ -33,6 +39,7 @@ type service struct {
 	readFile  func(string) ([]byte, error)
 	passwords passwordPrompter
 	writer    sourceWriter
+	generator credentialGenerator
 }
 
 func newService() *service {
@@ -40,10 +47,15 @@ func newService() *service {
 		readFile:  os.ReadFile,
 		passwords: password.New(),
 		writer:    filewrite.New(),
+		generator: generator.New(),
 	}
 }
 
 func run(args []string, version string, stdout, stderr io.Writer, execute executor) int {
+	return runWithCompletionInstaller(args, version, stdout, stderr, execute, newCompletionInstaller())
+}
+
+func runWithCompletionInstaller(args []string, version string, stdout, stderr io.Writer, execute executor, installer completionInstaller) int {
 	req, err := Parse(args)
 	if err != nil {
 		var usage *UsageError
@@ -62,18 +74,43 @@ func run(args []string, version string, stdout, stderr io.Writer, execute execut
 	case CommandVersion:
 		fmt.Fprintf(stdout, "envseal %s\n", version)
 		return 0
+	case CommandCompletion:
+		fmt.Fprint(stdout, completionScript(req.Shell))
+		return 0
+	case CommandCompletionInstall:
+		if installer == nil {
+			fmt.Fprintln(stderr, "envseal: completion-install-failed")
+			return 1
+		}
+		notice, err := installer.Plan(req)
+		if err != nil {
+			fmt.Fprintf(stderr, "envseal: %s\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, notice)
+		output, err := installer.Install(req)
+		if err != nil {
+			fmt.Fprintf(stderr, "envseal: %s\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, output)
+		return 0
 	default:
 		if execute == nil {
 			fmt.Fprintln(stderr, "envseal: command execution failed")
 			return 1
 		}
-		summary, err := execute.Execute(req)
+		output, err := execute.Execute(req)
 		if err != nil {
 			writeExecutionError(stderr, req, err)
 			return 1
 		}
+		if req.Command == CommandGenerate {
+			fmt.Fprintln(stdout, output)
+			return 0
+		}
 		if !req.Quiet {
-			fmt.Fprintf(stdout, "envseal: %s\n", summary)
+			fmt.Fprintf(stdout, "envseal: %s\n", output)
 		}
 		return 0
 	}
@@ -89,6 +126,8 @@ func (s *service) Execute(req Request) (string, error) {
 		return s.rotate(req)
 	case CommandCheck:
 		return s.check(req)
+	case CommandGenerate:
+		return s.generate(req)
 	default:
 		return "", &operationError{path: req.Source, category: "command-failed"}
 	}
@@ -194,6 +233,29 @@ func (s *service) rotate(req Request) (string, error) {
 	return fmt.Sprintf("rotated %d envelopes in %s", result.Changed, req.Source), nil
 }
 
+func (s *service) generate(req Request) (string, error) {
+	if s == nil || s.generator == nil {
+		return "", &operationError{category: "credential-generation-failed"}
+	}
+
+	var (
+		credential string
+		err        error
+	)
+	switch req.Mode {
+	case "passphrase":
+		credential, err = s.generator.Passphrase(req.Words)
+	case "secret":
+		credential, err = s.generator.Secret(req.Bytes)
+	default:
+		return "", &operationError{category: "credential-generation-failed"}
+	}
+	if err != nil || credential == "" {
+		return "", &operationError{category: "credential-generation-failed"}
+	}
+	return credential, nil
+}
+
 func (s *service) check(req Request) (string, error) {
 	document, err := s.load(req.Source)
 	if err != nil {
@@ -262,7 +324,11 @@ func writeExecutionError(stderr io.Writer, req Request, err error) {
 	}
 	var operation *operationError
 	if errors.As(err, &operation) {
-		fmt.Fprintf(stderr, "envseal: %s: %s\n", operation.path, operation.category)
+		if operation.path == "" {
+			fmt.Fprintf(stderr, "envseal: %s\n", operation.category)
+		} else {
+			fmt.Fprintf(stderr, "envseal: %s: %s\n", operation.path, operation.category)
+		}
 		return
 	}
 	fmt.Fprintf(stderr, "envseal: %s: operation-failed\n", req.Source)
