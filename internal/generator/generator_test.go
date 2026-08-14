@@ -167,19 +167,30 @@ func TestSecretBoundsAndEntropyFailureAreValueFree(t *testing.T) {
 func TestEmbeddedWordListIntegrity(t *testing.T) {
 	const sourceSHA256 = "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e"
 
-	sum := sha256.Sum256([]byte(effLargeWordList))
-	if got := hex.EncodeToString(sum[:]); got != sourceSHA256 {
-		t.Fatalf("EFF Large Wordlist SHA-256 = %s, want %s", got, sourceSHA256)
-	}
-	parsed, err := parseWordList(effLargeWordList)
-	if err != nil {
-		t.Fatalf("parseWordList() error = %v", err)
-	}
-	if len(parsed) != wordListEntries {
-		t.Fatalf("word list entries = %d, want %d", len(parsed), wordListEntries)
-	}
-	if parsed[0] != "abacus" || parsed[len(parsed)-1] != "zoom" {
-		t.Fatalf("word list boundaries = %q, %q; want abacus, zoom", parsed[0], parsed[len(parsed)-1])
+	lf := normalizeWordListLineEndings(effLargeWordList)
+	for _, test := range []struct {
+		name string
+		data string
+	}{
+		{name: "LF", data: lf},
+		{name: "CRLF", data: strings.ReplaceAll(lf, "\n", "\r\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sum := sha256.Sum256([]byte(normalizeWordListLineEndings(test.data)))
+			if got := hex.EncodeToString(sum[:]); got != sourceSHA256 {
+				t.Fatalf("EFF Large Wordlist SHA-256 = %s, want %s", got, sourceSHA256)
+			}
+			parsed, err := parseWordList(test.data)
+			if err != nil {
+				t.Fatalf("parseWordList() error = %v", err)
+			}
+			if len(parsed) != wordListEntries {
+				t.Fatalf("word list entries = %d, want %d", len(parsed), wordListEntries)
+			}
+			if parsed[0] != "abacus" || parsed[len(parsed)-1] != "zoom" {
+				t.Fatalf("word list boundaries = %q, %q; want abacus, zoom", parsed[0], parsed[len(parsed)-1])
+			}
+		})
 	}
 }
 

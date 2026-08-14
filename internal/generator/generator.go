@@ -102,6 +102,7 @@ func mustParseWordList(data string) []string {
 }
 
 func parseWordList(data string) ([]string, error) {
+	data = normalizeWordListLineEndings(data)
 	lines := strings.Split(strings.TrimSuffix(data, "\n"), "\n")
 	if len(lines) != wordListEntries {
 		return nil, errors.New("unexpected word list entry count")
@@ -121,6 +122,12 @@ func parseWordList(data string) ([]string, error) {
 		words[i] = fields[1]
 	}
 	return words, nil
+}
+
+// normalizeWordListLineEndings preserves the canonical LF representation when Git
+// checks out the embedded source with Windows CRLF line endings.
+func normalizeWordListLineEndings(data string) string {
+	return strings.ReplaceAll(data, "\r\n", "\n")
 }
 
 func diceRoll(index int) string {
