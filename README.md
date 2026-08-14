@@ -61,6 +61,43 @@ shasum -a 256 -c SHA256SUMS
 gh attestation verify envseal_v1.YYYYMMDD.N_linux_amd64.tar.gz --repo kensonjohnson/envseal
 ```
 
+## Shell completion
+
+Envseal renders static completion for Bash, Zsh, Fish, and PowerShell. The rendered scripts complete `envseal` directly when that binary is on `PATH`; otherwise they define an `envseal` wrapper that runs the repository-pinned `go tool envseal`. They do not alter `go` completion.
+
+Render a script without changing the filesystem (replace `go tool envseal` with a direct `envseal` binary command when using a release archive):
+
+```sh
+go tool envseal completion bash
+go tool envseal completion zsh
+go tool envseal completion fish
+go tool envseal completion powershell
+```
+
+Install only writes to a shell-verified autoload location. It never changes a startup or profile file by default:
+
+```sh
+go tool envseal completion install bash
+go tool envseal completion install zsh
+go tool envseal completion install fish
+go tool envseal completion install powershell
+```
+
+- **Bash:** Install [bash-completion](https://github.com/scop/bash-completion) and ensure it is loaded by your existing Bash setup. Envseal then writes `envseal.bash` to its configured `BASH_COMPLETION_USER_DIR`, or its default user completion directory. Start a new shell or reload your existing bash-completion setup. If no framework is detected, Envseal writes nothing; activate the current shell with `source <(go tool envseal completion bash)`.
+- **Zsh:** Enable `autoload -Uz compinit && compinit` in your existing Zsh setup and ensure an existing writable entry is present in `$fpath`. Envseal writes `_envseal` there; restart Zsh or run `compinit` again. If no such entry is found, no files are written; activate the current shell with `source <(go tool envseal completion zsh)`.
+- **Fish:** Envseal writes `envseal.fish` to `$XDG_CONFIG_HOME/fish/completions` (normally `~/.config/fish/completions`). Fish loads it automatically in a new shell; run `source ~/.config/fish/completions/envseal.fish` to load the default-location file now.
+- **PowerShell:** PowerShell has no arbitrary completion autoload directory, so its default install intentionally writes nothing. Activate the current session with `go tool envseal completion powershell | Invoke-Expression`.
+
+When the safe default reports no verified autoload location, persist completion only by explicitly consenting to a small idempotent startup/profile block:
+
+```sh
+go tool envseal completion install bash --configure-shell       # ~/.bashrc
+go tool envseal completion install zsh --configure-shell        # ~/.zshrc
+go tool envseal completion install powershell --configure-shell # current-user PowerShell profile
+```
+
+Before writing, `--configure-shell` prints the exact rendered-script target and profile block it will add. It then writes the static rendered script to `$XDG_CONFIG_HOME/envseal/completions` (normally `~/.config/envseal/completions`) and adds that marked, idempotent profile block sourcing the absolute script path. The block preserves existing content, is not duplicated on later runs, and contains no `go tool` command, so configured completion works equally with a direct release binary and the repository-pinned workflow. Restart the relevant shell after configuring it.
+
 ## Development and releases
 
 [Just](https://github.com/casey/just) is the repository command runner. Run `just check` before a change; it performs formatting, vet, tests, module verification, and a development build. `just release-build v1.YYYYMMDD.N` produces the six local release archives and `SHA256SUMS` in `dist/`.

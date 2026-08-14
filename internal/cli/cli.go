@@ -15,29 +15,33 @@ import (
 type Command string
 
 const (
-	CommandHelp     Command = "help"
-	CommandVersion  Command = "version"
-	CommandEncrypt  Command = "encrypt"
-	CommandDecrypt  Command = "decrypt"
-	CommandRotate   Command = "rotate"
-	CommandCheck    Command = "check"
-	CommandGenerate Command = "generate"
+	CommandHelp              Command = "help"
+	CommandVersion           Command = "version"
+	CommandEncrypt           Command = "encrypt"
+	CommandDecrypt           Command = "decrypt"
+	CommandRotate            Command = "rotate"
+	CommandCheck             Command = "check"
+	CommandGenerate          Command = "generate"
+	CommandCompletion        Command = "completion"
+	CommandCompletionInstall Command = "completion-install"
 )
 
 // Request is a fully parsed command invocation. Command handlers consume this
 // type instead of inspecting process arguments directly.
 type Request struct {
-	Command Command
-	HelpFor Command
-	Source  string
-	Output  string
-	Keys    []string
-	Quiet   bool
-	Force   bool
-	DryRun  bool
-	Mode    string
-	Words   int
-	Bytes   int
+	Command        Command
+	HelpFor        Command
+	Source         string
+	Output         string
+	Keys           []string
+	Quiet          bool
+	Force          bool
+	DryRun         bool
+	Mode           string
+	Shell          string
+	ConfigureShell bool
+	Words          int
+	Bytes          int
 }
 
 // UsageError is an invocation-shape error and maps to exit code 2.
@@ -80,6 +84,8 @@ func Parse(args []string) (Request, error) {
 		return parseOperation(CommandCheck, args[1:])
 	case string(CommandGenerate):
 		return parseGenerate(args[1:])
+	case string(CommandCompletion):
+		return parseCompletion(args[1:])
 	default:
 		return Request{}, usageError("unknown command")
 	}
@@ -259,6 +265,82 @@ func parseGenerate(args []string) (Request, error) {
 	return req, nil
 }
 
+func parseCompletion(args []string) (Request, error) {
+	if len(args) > 0 && args[0] == "install" {
+		return parseCompletionInstall(args[1:])
+	}
+	var positional []string
+	options := true
+	help := false
+	for _, arg := range args {
+		if options {
+			switch arg {
+			case "--":
+				options = false
+				continue
+			case "--help":
+				help = true
+				continue
+			default:
+				if strings.HasPrefix(arg, "-") {
+					return Request{}, usageError("unknown option")
+				}
+			}
+		}
+		positional = append(positional, arg)
+	}
+	if help {
+		return Request{Command: CommandHelp, HelpFor: CommandCompletion}, nil
+	}
+	if len(positional) != 1 {
+		return Request{}, usageError("completion requires exactly one shell")
+	}
+	if !supportedCompletionShell(positional[0]) {
+		return Request{}, usageError("completion shell must be bash, zsh, fish, or powershell")
+	}
+	return Request{Command: CommandCompletion, Shell: positional[0]}, nil
+}
+
+func parseCompletionInstall(args []string) (Request, error) {
+	var positional []string
+	options := true
+	configure := false
+	help := false
+	for _, arg := range args {
+		if options {
+			switch arg {
+			case "--":
+				options = false
+				continue
+			case "--help":
+				help = true
+				continue
+			case "--configure-shell":
+				if configure {
+					return Request{}, usageError("--configure-shell may be specified once")
+				}
+				configure = true
+				continue
+			default:
+				if strings.HasPrefix(arg, "-") {
+					return Request{}, usageError("unknown option")
+				}
+			}
+		}
+		positional = append(positional, arg)
+	}
+	if help {
+		return Request{Command: CommandHelp, HelpFor: CommandCompletionInstall}, nil
+	}
+	if len(positional) != 1 {
+		return Request{}, usageError("completion install requires exactly one shell")
+	}
+	if !supportedCompletionShell(positional[0]) {
+		return Request{}, usageError("completion shell must be bash, zsh, fish, or powershell")
+	}
+	return Request{Command: CommandCompletionInstall, Shell: positional[0], ConfigureShell: configure}, nil
+}
+
 func parseDecimalCount(value string) (int, error) {
 	if value == "" {
 		return 0, usageError("count must be a decimal integer")
@@ -293,7 +375,7 @@ func validateRequest(req Request) error {
 // Run applies the standard output and exit-code boundary around Parse and the
 // production command executor.
 func Run(args []string, version string, stdout, stderr io.Writer) int {
-	return run(args, version, stdout, stderr, newService())
+	return runWithCompletionInstaller(args, version, stdout, stderr, newService(), newCompletionInstaller())
 }
 
 // Usage returns the help text for the root command or an individual operation.
@@ -309,7 +391,11 @@ func Usage(command Command) string {
 		return "Usage: envseal check [--quiet] <source>\n\nValidate dotenv syntax and sealed-envelope structure without prompting or writing.\n\nOptions:\n  --quiet  Suppress the success summary.\n  --help   Show this help.\n  --       Stop option parsing.\n"
 	case CommandGenerate:
 		return "Usage: envseal generate passphrase [--words <count>]\n       envseal generate secret [--bytes <count>]\n\nGenerate a credential and write it to stdout.\n\nOptions:\n  --words  Passphrase word count (6–64; default 8).\n  --bytes  Secret byte count (16–4096; default 32).\n  --help   Show this help.\n  --       Stop option parsing.\n"
+	case CommandCompletion:
+		return "Usage: envseal completion <bash|zsh|fish|powershell>\n       envseal completion install <bash|zsh|fish|powershell> [--configure-shell]\n\nRender a shell completion script to stdout, or safely install one.\n\nSupported shells:\n  bash        Bash\n  zsh         Zsh\n  fish        Fish\n  powershell  PowerShell\n\nOptions:\n  --help  Show this help.\n"
+	case CommandCompletionInstall:
+		return "Usage: envseal completion install <bash|zsh|fish|powershell> [--configure-shell]\n\nInstall completion only into a verified shell autoload directory. If none is available, no files are changed and manual activation instructions are printed.\n\nOptions:\n  --configure-shell  Explicitly allow an idempotent shell startup/profile edit when no verified autoload directory exists.\n  --help             Show this help.\n"
 	default:
-		return "Usage:\n  envseal encrypt [--quiet] <source> <key> [<key> ...]\n  envseal decrypt [--quiet] [--force] <source> <plaintext-output>\n  envseal decrypt [--quiet] --dry-run <source>\n  envseal rotate [--quiet] <source>\n  envseal check [--quiet] <source>\n  envseal generate passphrase [--words <count>]\n  envseal generate secret [--bytes <count>]\n\nCommands:\n  encrypt   Encrypt selected dotenv values in place.\n  decrypt   Write plaintext values to an explicit output.\n  rotate    Re-encrypt all sealed values with a new password.\n  check     Validate source syntax and envelope structure.\n  generate  Generate a passphrase or machine secret.\n\nGlobal options:\n  --help     Show root help, or command help after a command.\n  --version  Print the build version.\n  --          Stop option parsing for paths or keys beginning with '-'.\n"
+		return "Usage:\n  envseal encrypt [--quiet] <source> <key> [<key> ...]\n  envseal decrypt [--quiet] [--force] <source> <plaintext-output>\n  envseal decrypt [--quiet] --dry-run <source>\n  envseal rotate [--quiet] <source>\n  envseal check [--quiet] <source>\n  envseal generate passphrase [--words <count>]\n  envseal generate secret [--bytes <count>]\n  envseal completion <bash|zsh|fish|powershell>\n  envseal completion install <bash|zsh|fish|powershell> [--configure-shell]\n\nCommands:\n  encrypt     Encrypt selected dotenv values in place.\n  decrypt     Write plaintext values to an explicit output.\n  rotate      Re-encrypt all sealed values with a new password.\n  check       Validate source syntax and envelope structure.\n  generate    Generate a passphrase or machine secret.\n  completion  Render or safely install shell completion.\n\nGlobal options:\n  --help     Show root help, or command help after a command.\n  --version  Print the build version.\n  --          Stop option parsing for paths or keys beginning with '-'.\n"
 	}
 }

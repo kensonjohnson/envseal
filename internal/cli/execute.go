@@ -52,6 +52,10 @@ func newService() *service {
 }
 
 func run(args []string, version string, stdout, stderr io.Writer, execute executor) int {
+	return runWithCompletionInstaller(args, version, stdout, stderr, execute, newCompletionInstaller())
+}
+
+func runWithCompletionInstaller(args []string, version string, stdout, stderr io.Writer, execute executor, installer completionInstaller) int {
 	req, err := Parse(args)
 	if err != nil {
 		var usage *UsageError
@@ -69,6 +73,27 @@ func run(args []string, version string, stdout, stderr io.Writer, execute execut
 		return 0
 	case CommandVersion:
 		fmt.Fprintf(stdout, "envseal %s\n", version)
+		return 0
+	case CommandCompletion:
+		fmt.Fprint(stdout, completionScript(req.Shell))
+		return 0
+	case CommandCompletionInstall:
+		if installer == nil {
+			fmt.Fprintln(stderr, "envseal: completion-install-failed")
+			return 1
+		}
+		notice, err := installer.Plan(req)
+		if err != nil {
+			fmt.Fprintf(stderr, "envseal: %s\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, notice)
+		output, err := installer.Install(req)
+		if err != nil {
+			fmt.Fprintf(stderr, "envseal: %s\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, output)
 		return 0
 	default:
 		if execute == nil {
